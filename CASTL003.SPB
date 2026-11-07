@@ -1,0 +1,199 @@
+' THE CASTLE - segmento 3: stanze, HUD, menu e musica (drawLevel e gli stati del gioco).
+
+' Grafica in VRAM (SCREEN 1: pattern a 0, name table a 6144, colori a 8192, attributi sprite a 6912, pattern sprite a 14336)
+SUB setup
+ SHARED msb, sx, sa
+ POKE msb + 1, 5
+ SETBANK 4
+ VCOPY DATAWIN, 0, 2048
+ VCOPY DATAWIN + 2048, 14336, 1792
+ VCOPY DATAWIN + 3840, 8192, 32
+ FOR k = 0 TO 7 : sx(k) = PEEK(DATAWIN + 3872 + k) : NEXT k
+ POKE sa + 3, 15 : POKE sa + 7, 6
+END SUB
+
+' Avvia un brano (0 introduzione, 1 game over): banco, puntatore e frame, inizio e punto di loop, dalla tabella del segmento 4
+SUB mus(n)
+ SHARED msb
+ POKE msb, 0
+ POKE msb + 1, 5
+ SETBANK 4
+ a = DATAWIN + 3880 + n * 10
+ FOR k = 0 TO 9 : POKE msb + 2 + k, PEEK(a + k) : NEXT k
+ POKE msb, 1
+END SUB
+
+' Testo: i caratteri ' ' .. '_' sono le tile 192-255
+SUB pt(c, r, t$)
+ SHARED mb
+ o = r * 32 + c
+ FOR i = 1 TO LEN(t$)
+  v = ASC(MID$(t$, i, 1)) + 160
+  POKE mb + o, v
+  VPOKE 6144 + o, v
+  o = o + 1
+ NEXT i
+END SUB
+
+' Numero a w cifre con gli zeri davanti
+SUB pn(c, r, n, w)
+ t$ = STR$(n)
+ t$ = RIGHT$(t$, LEN(t$) - 1)
+ WHILE LEN(t$) < w
+  t$ = "0" + t$
+ WEND
+ CALL pt(c, r, t$)
+END SUB
+
+' updateScore. Il punteggio e' sempre multiplo di 100 e si conta in centinaia, cosi' non supera mai i 16 bit
+SUB hudsc
+ SHARED sc, rm
+ IF rm = 0 OR rm >= 26 THEN EXIT SUB
+ CALL pn(13, 0, sc, 2)
+ IF sc < 100 THEN
+  CALL pt(15, 0, "00")
+ ELSE
+  CALL pt(16, 0, "00")
+ END IF
+ CALL hudtm
+END SUB
+
+SUB hudtm
+ SHARED tm
+ CALL pn(30, 0, tm, 2)
+END SUB
+
+SUB hud
+ SHARED rm
+ CALL pt(0, 0, "LVL:")
+ CALL pn(4, 0, rm, 2)
+ CALL pt(7, 0, "SCORE:")
+ CALL pt(18, 0, "LIFE:")
+ CALL pt(28, 0, "T:")
+ CALL hudsc
+END SUB
+
+' messageInGame
+SUB msg(t$)
+ SHARED rfs
+ CALL pt(12, 22, t$)
+ rfs = 1
+END SUB
+
+' VDP_ReplacementPartialArea(22): rimette la riga coperta dal messaggio e l'inventario che ci sta sopra
+SUB unmsg
+ SHARED msb, lb, lm, mb, iv
+ POKE msb + 1, lb + 1
+ SETBANK lb
+ o = 22 * 32
+ VCOPY lm + o, 6144 + o, 32
+ FOR i = o TO o + 31 : POKE mb + i, PEEK(lm + i) : NEXT i
+ FOR i = 0 TO 4 : CALL setT(8 + i * 16, 176, iv(i)) : NEXT i
+END SUB
+
+SUB menu
+ SHARED msb, dif, mb
+ VPOKE 6912, 208
+ VDP(1) = VDP(1) AND 191
+ VFILL 6144, 768, 0
+ FOR i = 0 TO 767 : POKE mb + i, 0 : NEXT i
+ CALL pt(10, 1, "THE CASTLE")
+ CALL pt(1, 23, "DEVELOPED BY 8BIT SOFTWARE 2026.")
+ REM CALL pt(1, 23, "DEVELOPED BY NICOLA BROGELLI.")
+ CALL pt(8, 8, "SELECT DIFFICULTY:")
+ CALL pt(8, 11, "0 - EASY")
+ CALL pt(8, 14, "1 - NORMAL")
+ CALL pt(8, 17, "2 - HARD")
+ VDP(1) = VDP(1) OR 64
+ dif = -1
+ WHILE dif < 0
+  k = PEEK(msb + 57)
+  IF (k AND 1) = 0 THEN
+   dif = 0
+  ELSEIF (k AND 2) = 0 THEN
+   dif = 1
+  ELSEIF (k AND 4) = 0 THEN
+   dif = 2
+  END IF
+ WEND
+END SUB
+
+' State_Preset
+SUB newgame
+ SHARED io, il, iv, nl, sc, air, vy, px, py, fsy, lsy, dfl, uw, dly, rfs, prv, ip, act, pact, idl, af, fr, imm
+ FOR k = 0 TO 223 : io(k) = 0 : il(k) = 0 : NEXT k
+ FOR k = 0 TO 4 : iv(k) = 0 : NEXT k
+ nl = 3 : sc = 0 : air = 0 : vy = 0 : px = 223 : py = 128 : fsy = 0 : lsy = 0
+ dfl = 0 : uw = 0 : dly = 0 : rfs = 0 : prv = 0 : ip = 0 : act = 0 : pact = 0 : idl = 0 : af = 64 : fr = 0 : imm = 0
+END SUB
+
+' Oggetti della stanza: le tabelle in RAM, gli attributi degli sprite e la posizione del cavaliere (a = record della stanza)
+SUB objects(a)
+ SHARED px, py, prv, ne, nh, ex, ey, ed, es, eh, sa, nb, gf
+ IF prv = 3 THEN k = 9 ELSE k = 5 + prv + prv
+ y = PEEK(a + k + 1)
+ IF y <> 255 THEN
+  px = PEEK(a + k) : py = y
+ END IF
+ ne = PEEK(a + 11) : nh = PEEK(a + 12)
+ IF gf AND 1 THEN d = 1 ELSE d = 255
+ p = a + 16 : q = sa + 8
+ FOR i = 0 TO ne - 1
+  x = PEEK(p) : y = PEEK(p + 1)
+  POKE ex + i, x : POKE ey + i, y : POKE ed + i, d : POKE es + i, 1 : POKE eh + i, PEEK(p + 3)
+  POKE q, y : POKE q + 1, x : POKE q + 2, PEEK(p + 2) : POKE q + 3, 15
+  p = p + 4 : q = q + 4
+ NEXT i
+ POKE q, 208
+ nb = ne * 4 + 9
+END SUB
+
+' Inventario, vite e oggetti gia' raccolti in questa stanza
+SUB items
+ SHARED rm, iv, nl, io, il, mb
+ IF rm > 0 AND rm < 26 THEN
+  CALL hud
+  FOR i = 0 TO 4 : CALL setT(8 + i * 16, 176, iv(i)) : NEXT i
+  CALL dsplife
+ END IF
+ k = rm * 8
+ FOR i = k TO k + 7
+  IF io(i) THEN
+   o = io(i) - 1
+   POKE mb + o, il(i)
+   VPOKE 6144 + o, il(i)
+  END IF
+ NEXT i
+END SUB
+
+' drawLevel
+SUB drawlv(n)
+ SHARED msb, rm, sec, tm, lsy, wop, fsy, iv, dl, lb, lm, mb, cs, cd, tkb
+ IF n > 0 AND n < 26 THEN POKE msb, 0 ELSE POKE msb, 1
+ VPOKE 6912, 208
+ VDP(1) = VDP(1) AND 191
+ rm = n : sec = 0 : tm = 60 : lsy = 0 : wop = 0 : fsy = 0
+ ' la pozione vale solo nella stanza in cui e' stata presa
+ FOR i = 0 TO 4
+  IF iv(i) = 95 THEN iv(i) = 0
+ NEXT i
+ lb = 5 + n \ 9
+ POKE msb + 1, lb + 1
+ SETBANK lb
+ a = DATAWIN + (n MOD 9) * 832
+ lm = a + 64
+ VFILL 8210, 2, PEEK(a + 4)
+ FOR i = 0 TO 3 : dl(i) = PEEK(a + i) : NEXT i
+ VCOPY lm, 6144, 768
+ cs = lm : cd = mb
+ __ASM
+  ld hl,(cs)
+  ld de,(cd)
+  ld bc,768
+  ldir
+ __ENDASM
+ CALL objects(a)
+ CALL items
+ POKE tkb, 0
+ VDP(1) = VDP(1) OR 64
+END SUB

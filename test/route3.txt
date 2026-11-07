@@ -1,0 +1,16 @@
+# NORMAL, no help: wait for the time limit (the first room with a timer), three lives, game over, back to the menu and a new game
+[vb 6408] == 243 => down 0 0x02
+$f > 20 => up 0 0x02
+$y == 170 && $x == 32 => down R
+$x >= 114 && $y == 170 => up R ; down S
+$lvl == 1 => up S
+$life == 2 => shot life2
+$life == 1 => shot life1
+[vb 6144] != 236 && $f > 100 => up S
+$f > 80 => shot over
+$f > 100 => down S
+$f > 20 => up S
+[vb 6408] == 243 => shot menu2 ; down 0 0x01
+$f > 20 => up 0 0x01
+$y == 170 && $x == 32 && $f > 20 => shot again
+$f > 20 => exit

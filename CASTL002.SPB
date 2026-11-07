@@ -1,0 +1,321 @@
+' THE CASTLE - segmento 2: oggetti, inventario, vite, porte e trappole (the-castel_s3_b1.c e parte di the-castel.c).
+' Tile: 64 lava, 65-67 porte aperte, 68/78 porta avanti, 69/70/74 porte chiuse, 71 porta indietro, 79 cuore, 80 acqua, 81/82 passaggi,
+' 83 tempo, 95 pozione, 96-98 chiavi, 99 moneta, 104 croce, 105-108 spunzoni, 113 coppa, 114 teschio, 115 ossa, 187-192 tile dei raccolti.
+
+FUNCTION tl(x, y)
+ SHARED mb, ry, cx
+ tl = PEEK(mb + ry(y) + cx(x))
+END FUNCTION
+
+SUB setT(x, y, t)
+ SHARED mb, ry, cx
+ o = ry(y) + cx(x)
+ POKE mb + o, t
+ VPOKE 6144 + o, t
+END SUB
+
+' ItemsTakenForLevel: ogni stanza ricorda 8 tile cambiate (offset + 1, tile)
+SUB take(x, y, m)
+ SHARED rm, io, il, ry, cx
+ p = rm * 8
+ FOR k = p TO p + 7
+  IF io(k) = 0 THEN
+   io(k) = ry(y) + cx(x) + 1
+   il(k) = m
+   EXIT SUB
+  END IF
+ NEXT k
+END SUB
+
+FUNCTION hasinv(t)
+ SHARED iv
+ hasinv = 0
+ FOR i = 0 TO 4
+  IF iv(i) = t THEN hasinv = -1
+ NEXT i
+END FUNCTION
+
+SUB addinv(t)
+ SHARED iv
+ FOR i = 0 TO 4
+  IF iv(i) = 0 THEN
+   iv(i) = t
+   CALL setT(8 + i * 16, 176, t)
+   EXIT SUB
+  END IF
+ NEXT i
+END SUB
+
+SUB rminv(t)
+ SHARED iv
+ FOR i = 0 TO 4
+  IF iv(i) = t THEN
+   iv(i) = 0
+   CALL setT(8 + i * 16, 176, 0)
+   EXIT SUB
+  END IF
+ NEXT i
+END SUB
+
+' replaceAndRemoveItem
+SUB pick(x, y, t, m)
+ CALL take(x, y, m)
+ CALL setT(x, y, 0)
+ CALL addinv(t)
+END SUB
+
+FUNCTION rmlife
+ SHARED nl
+ rmlife = 0
+ IF nl > 0 THEN
+  nl = nl - 1
+  CALL setT(190 + nl * 8, 4, 0)
+  IF nl > 0 THEN rmlife = -1
+ END IF
+END FUNCTION
+
+SUB dsplife
+ SHARED nl
+ FOR i = 0 TO 2
+  IF i < nl THEN
+   CALL setT(190 + i * 8, 4, 79)
+  ELSE
+   CALL setT(190 + i * 8, 4, 0)
+  END IF
+ NEXT i
+END SUB
+
+' Effetti: 0 chiave, 1 vita persa, 2 moneta o croce, 3 pozione
+SUB sfx(n)
+ SHARED msb, sx
+ POKE msb + 27, 0
+ POKE msb + 28, sx(n + n) : POKE msb + 29, sx(n + n + 1)
+ POKE msb + 35, 5
+ POKE msb + 27, 1
+END SUB
+
+' Porta chiusa con la chiave giusta
+SUB opend(x, y, k, m)
+ SHARED prv, dl
+ CALL rminv(k)
+ CALL take(x, y, m)
+ prv = 0
+ CALL drawlv(dl(0))
+END SUB
+
+' interact: tasto azione
+FUNCTION iact(x, y)
+ SHARED nl, prv, dl, rm
+ iact = 0
+ t = tl(x, y)
+ IF t < 60 THEN EXIT FUNCTION
+ SELECT CASE t
+  CASE 79
+   iact = -1
+   IF nl < 3 THEN
+    CALL setT(190 + nl * 8, 4, 79)
+    nl = nl + 1
+    CALL take(x, y, 187)
+    CALL setT(x, y, 0)
+   END IF
+  CASE 65, 66, 67, 68, 78
+   prv = 0
+   CALL drawlv(dl(0))
+  CASE 71
+   prv = 1
+   CALL drawlv(dl(1))
+  CASE 69, 70, 74
+   IF t = 69 THEN
+    k = 96 : m = 65
+   ELSEIF t = 70 THEN
+    k = 97 : m = 66
+   ELSE
+    k = 98 : m = 67
+   END IF
+   IF t = 74 AND rm = 1 THEN
+    IF hasinv(96) THEN
+     CALL won
+    ELSE
+     CALL msg("NO WAY OUT")
+    END IF
+   ELSEIF hasinv(k) THEN
+    CALL opend(x, y, k, m)
+   ELSE
+    CALL msg("IS CLOSED!")
+   END IF
+  CASE 96, 97, 98
+   iact = -1
+   CALL pick(x, y, t, t + 93)
+   CALL sfx(0)
+  CASE 95
+   iact = -1
+   IF hasinv(95) = 0 THEN CALL pick(x, y, 95, 188)
+   CALL sfx(3)
+  CASE 104
+   iact = -1
+   IF hasinv(104) = 0 THEN CALL pick(x, y, 104, 0)
+   CALL sfx(2)
+ END SELECT
+END FUNCTION
+
+SUB won
+ SHARED st
+ st = 2
+END SUB
+
+' isDanger
+FUNCTION danger(x, y)
+ SHARED ct, rm, st
+ danger = 0
+ IF PEEK(ct + tl(x, y)) AND 2 THEN
+  danger = -1
+  IF rmlife THEN
+   CALL dsplife
+   CALL drawlv(rm)
+  ELSE
+   st = 1
+  END IF
+ END IF
+END FUNCTION
+
+' getItem: monete, coppe e tempo si raccolgono passandoci sopra
+FUNCTION getit(x, y)
+ SHARED tm
+ getit = 0
+ t = tl(x, y)
+ IF t = 99 OR t = 113 THEN
+  CALL setT(x, y, 0)
+  CALL take(x, y, 192)
+  getit = -1
+ ELSEIF t = 83 THEN
+  CALL setT(x, y, 0)
+  IF tm < 60 THEN
+   IF 60 - tm > 10 THEN tm = tm + 10 ELSE tm = tm + 10 - (60 - tm)
+  END IF
+  getit = -1
+ END IF
+END FUNCTION
+
+' isPassage
+FUNCTION ispass(x, y)
+ SHARED prv, dl
+ ispass = 0
+ t = tl(x, y)
+ IF t = 81 THEN
+  prv = 3 : ispass = -1
+  CALL drawlv(dl(2))
+ ELSEIF t = 82 THEN
+  prv = 3 : ispass = -1
+  CALL drawlv(dl(3))
+ END IF
+END FUNCTION
+
+' genericControl: acqua, trappole, raccolta, passaggi, nell'ordine dell'originale
+SUB gcslow
+ SHARED px, py, uw, dly, sec, st, sc
+ x = (px + 8) AND 255
+ y1 = (py + 12) AND 255
+ y2 = (py + 4) AND 255
+ s = 0
+ IF tl(px, py) = 80 THEN
+  IF uw THEN
+   IF sec - dly > 3 THEN
+    IF rmlife THEN
+     CALL dsplife
+     uw = 0 : s = 1
+    ELSE
+     st = 1
+    END IF
+   END IF
+  ELSE
+   dly = sec : uw = -1
+  END IF
+ ELSE
+  uw = 0 : dly = 0
+ END IF
+ IF danger(x, y1) THEN
+  s = 1
+ ELSEIF danger(x, y2) THEN
+  s = 1
+ END IF
+ r = getit(x, y1)
+ IF r = 0 THEN r = getit(x, y2)
+ IF r THEN
+  sc = sc + 1
+  CALL hudsc
+  CALL sfx(2)
+ END IF
+ IF ispass(x, y1) = 0 THEN r = ispass(x, y2)
+ IF s THEN CALL sfx(1)
+END SUB
+
+' physicsEventPlayer: il cavaliere tocca terra (danno da caduta solo in HARD)
+SUB landed
+ SHARED air, lsy, fsy, dif, py, dfl, st
+ air = 0 : lsy = 0
+ IF fsy > 0 THEN
+  IF dif >= 2 AND py - fsy > 40 THEN
+   IF rmlife THEN
+    dfl = 1 : fsy = 0
+   ELSE
+    st = 1
+   END IF
+  ELSE
+   fsy = 0
+  END IF
+ END IF
+END SUB
+
+' Contatto con un nemico: pozione = immunita', croce = nemico ucciso, altrimenti si perde una vita. -1 se la stanza e' cambiata
+FUNCTION ehit(i)
+ SHARED imm, es, sa, sc, rm, st
+ ehit = 0
+ IF hasinv(95) THEN
+  IF imm < 50 THEN
+   imm = imm + 1
+  ELSE
+   CALL rminv(95)
+   imm = 0
+  END IF
+  EXIT FUNCTION
+ END IF
+ IF hasinv(104) THEN
+  POKE sa + 8 + i * 4, 213
+  CALL hudsc
+  POKE es + i, 0
+  CALL rminv(104)
+  sc = sc + 5
+  EXIT FUNCTION
+ END IF
+ ehit = -1
+ IF rmlife THEN
+  CALL dsplife
+  CALL drawlv(rm)
+  CALL sfx(1)
+ ELSE
+  st = 1
+ END IF
+END FUNCTION
+
+' Un secondo di gioco (50 tick): tempo limite in NORMAL e HARD, cancellazione del messaggio
+SUB second
+ SHARED fr, sec, rm, dif, tm, st, rfs
+ sec = sec + 1 : fr = 0
+ IF rm = 0 OR rm >= 26 THEN EXIT SUB
+ IF dif > 0 THEN
+  tm = tm - 1
+  CALL hudtm
+  IF tm = 0 THEN
+   IF rmlife THEN
+    CALL dsplife
+    CALL drawlv(rm)
+   ELSE
+    st = 1
+   END IF
+  END IF
+ END IF
+ IF rfs THEN
+  rfs = 0
+  CALL unmsg
+ END IF
+END SUB

@@ -1,0 +1,201 @@
+' THE CASTLE - segmento 1: un tick di gioco (State_Game, updateCharacter, GamePawn_Update, updateGenericEnemy).
+' Le coordinate sono byte come nel C: ogni somma che puo' uscire dal byte passa da AND 255.
+
+SUB tick
+ SHARED dfl, prv, rm, sa, px, py, af, nb, fr, gf, ip, msb
+ ' morto per caduta nel tick precedente: si riparte dalla stanza
+ IF dfl THEN
+  dfl = 0 : prv = 0
+  CALL drawlv(rm)
+  EXIT SUB
+ END IF
+ y = py - 1
+ POKE sa, y : POKE sa + 1, px : POKE sa + 2, af + 4
+ POKE sa + 4, y : POKE sa + 5, px : POKE sa + 6, af + 8
+ VCOPY sa, 6912, nb
+ fr = fr + 1 : gf = gf + 1
+ CALL hero
+ CALL gen
+ ip = PEEK(msb + 56)
+ IF fr = 50 THEN CALL second
+ IF (gf AND 1) = 0 THEN CALL enem
+END SUB
+
+' updateCharacter: movimento richiesto, gravita', stato dell'animazione
+SUB hero
+ SHARED ip, dx, dy, mv, air, vy, vt, px, py, act, pact, idl, af, ne, nh, lsy, fsy, wop, dif
+ dx = 0 : dy = 0 : act = 0 : d = 0
+ k = ip
+ IF k AND 1 THEN
+  dx = 1 : mv = 1 : d = 1
+ ELSEIF k AND 2 THEN
+  dx = -1 : mv = 1
+ ELSE
+  mv = 0
+ END IF
+ IF air THEN
+  dy = vt(vy + 15)
+  vy = vy - 1
+  IF vy < -15 THEN vy = -15
+ ELSEIF k AND 4 THEN
+  air = 1 : vy = 15
+ ELSEIF k AND 8 THEN
+  ' la seconda prova usa la posizione di adesso: la prima puo' aver cambiato stanza
+  IF iact((px + 8) AND 255, (py + 12) AND 255) = 0 THEN o = iact(px, (py + 12) AND 255)
+ END IF
+ IF air THEN
+  IF vy >= 0 THEN
+   act = 2
+  ELSE
+   o = 0
+   IF ne > nh THEN o = onplat
+   IF o THEN
+    dy = dy + 2 : lsy = py : fsy = 0 : wop = 1
+   ELSE
+    act = 3 : wop = 0
+    IF dif >= 2 THEN
+     IF fsy = 0 AND lsy > 0 THEN fsy = lsy
+    END IF
+   END IF
+  END IF
+ ELSE
+  wop = 0
+  IF mv THEN
+   IF d = 1 THEN act = 4 ELSE act = 1
+  END IF
+ END IF
+ IF act <> pact THEN
+  pact = act : idl = 0
+ END IF
+ IF act = 0 THEN
+  IF idl >= 88 THEN idl = 0
+  IF idl < 64 THEN af = 64 ELSE af = 32
+  idl = idl + 1
+ ELSEIF act = 1 THEN
+  af = 48
+ ELSEIF act = 2 THEN
+  af = 80
+ ELSEIF act = 3 THEN
+  af = 96
+ ELSE
+  af = 112
+ END IF
+ CALL phys
+END SUB
+
+' isOnPlatform: se il cavaliere e' sopra una piattaforma lo appoggia su di essa
+FUNCTION onplat
+ SHARED px, py, ne, nh, ex, ey
+ onplat = 0
+ b = py + 17
+ FOR i = nh TO ne - 1
+  x = PEEK(ex + i)
+  IF px >= x - 10 THEN
+   IF px <= x + 10 THEN
+    y = PEEK(ey + i)
+    IF b > y THEN
+     IF b < y + 8 THEN
+      py = (y - 16) AND 255
+      onplat = -1
+      EXIT FUNCTION
+     END IF
+    END IF
+   END IF
+  END IF
+ NEXT i
+END FUNCTION
+
+' GamePawn_Update: collisioni del pawn 16x16 con la mappa
+SUB phys
+ SHARED px, py, dx, dy, ry, cx, mb, ct, air, vy, fsy
+ tx = (px + dx) AND 255
+ ty = (py + dy) AND 255
+ IF dy > 0 THEN
+  b = ty + 16
+  IF b >= 184 THEN
+   CALL landed
+  ELSE
+   r = mb + ry(b)
+   IF PEEK(ct + PEEK(r + cx(tx + 4))) AND 1 THEN
+    CALL landed
+    ty = ((b AND 504) - 16) AND 255
+   ELSEIF PEEK(ct + PEEK(r + cx(tx + 12))) AND 1 THEN
+    CALL landed
+    ty = ((b AND 504) - 16) AND 255
+   END IF
+  END IF
+ ELSEIF dy < 0 THEN
+  IF ty > py THEN
+   ty = 0
+  ELSEIF PEEK(ct + PEEK(mb + ry(ty) + cx(tx + 8))) AND 1 THEN
+   ty = ((ty AND 248) + 8) AND 255
+  END IF
+ ELSE
+  r = mb + ry(ty + 16)
+  IF (PEEK(ct + PEEK(r + cx(tx + 4))) OR PEEK(ct + PEEK(r + cx(tx + 12)))) AND 1 THEN
+   r = 0
+  ELSEIF air = 0 THEN
+   air = 1 : vy = 0 : fsy = py
+  END IF
+ END IF
+ IF dx > 0 THEN
+  b = tx + 16
+  IF (b AND 255) >= px THEN
+   IF PEEK(ct + PEEK(mb + ry(ty + 8) + cx(b))) AND 1 THEN tx = ((b AND 504) - 16) AND 255
+  END IF
+ ELSEIF dx < 0 THEN
+  IF tx <= px THEN
+   IF PEEK(ct + PEEK(mb + ry(ty + 8) + cx(tx))) AND 1 THEN tx = ((tx AND 248) + 8) AND 255
+  END IF
+ END IF
+ px = tx : py = ty
+END SUB
+
+' genericControl: se sotto il cavaliere non c'e' nulla di speciale non serve altro (e' il caso di quasi tutti i tick)
+SUB gen
+ SHARED px, py, mb, ry, cx, ct, uw
+ c = mb + cx((px + 8) AND 255)
+ t = PEEK(ct + PEEK(c + ry((py + 12) AND 255))) OR PEEK(ct + PEEK(c + ry((py + 4) AND 255)))
+ IF (t AND 14) = 0 THEN
+  IF uw = 0 THEN
+   IF PEEK(mb + ry(py) + cx(px)) <> 80 THEN EXIT SUB
+  END IF
+ END IF
+ CALL gcslow
+END SUB
+
+' updateGenericEnemy + physicsCollisionPlayerAndGenericEnemy (ogni due tick): tutti invertono sulle tile >= 100
+SUB enem
+ SHARED ne, nh, ex, ey, ed, es, eh, ry, cx, mb, sa, px, py
+ q = sa + 8
+ FOR i = 0 TO ne - 1
+  IF PEEK(es + i) THEN
+   x = PEEK(ex + i) : y = PEEK(ey + i) : d = PEEK(ed + i)
+   IF PEEK(mb + ry(y) + cx((x + 7) AND 255)) >= 100 THEN
+    d = 256 - d
+    POKE ed + i, d
+   END IF
+   IF PEEK(eh + i) THEN
+    y = (y + d) AND 255
+    POKE ey + i, y : POKE q, y
+   ELSE
+    x = (x + d) AND 255
+    POKE ex + i, x : POKE q + 1, x
+   END IF
+   IF i < nh THEN
+    u = (x - px) AND 255
+    IF u > 127 THEN u = 256 - u
+    IF u < 13 THEN
+     v = (y - py) AND 255
+     IF v > 127 THEN v = 256 - v
+     IF v < 13 THEN
+      IF u * u + v * v < 169 THEN
+       IF ehit(i) THEN EXIT FOR
+      END IF
+     END IF
+    END IF
+   END IF
+  END IF
+  q = q + 4
+ NEXT i
+END SUB

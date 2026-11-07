@@ -1,0 +1,383 @@
+OPTION TARGET ROM_ASCII8
+OPTION LABELS
+' THE CASTLE - di Nicola Brogelli. Port in SamPr Basic della versione C/MSXgl (cartuccia ASCII8 multi-segmento, MSX1).
+' Controlli: frecce o joystick (porta 1 e 2), SU o tasto A = salto, SPAZIO o tasto B = azione.
+' Segmenti: 0 avvio, musica e ciclo principale | 1 un tick di gioco: fisica e nemici | 2 oggetti, vite, porte, trappole
+'   3 stanze, HUD, menu | 4 grafica ed effetti (.BIN) | 5-8 le 28 stanze (.BIN) | 9-13 musica (.BIN)
+' I .BIN contengono i dati gia' convertiti dalla versione C.
+' Dati in RAM (a cui si accede con PEEK/POKE, piu' veloci di un array):
+'   mp  mappa delle tile: copia in RAM della name table, tutto quello che scrive a video scrive anche qui
+'   sa  tabella degli attributi degli sprite, inviata alla VRAM con un solo VCOPY per tick
+'   eb  nemici e piattaforme: ex, ey, ed (direzione 1 o 255), es (1 = attivo), eh (1 = si muove in verticale), 16 byte ciascuno
+'   cl  classe di ogni tile: bit 0 solido, 1 trappola, 2 oggetto da raccogliere al passaggio, 3 passaggio di stanza
+DIM ms(31), mp(560), sa2(31), eb(47), cl(127), ry(271), cx(271), vt(30), io(223), il(223), iv(4), dl(3), sx(7)
+msb = VARPTR(ms(0))
+mb = VARPTR(mp(0))
+sa = VARPTR(sa2(0))
+ex = VARPTR(eb(0)) : ey = ex + 16 : ed = ey + 16 : es = ed + 16 : eh = es + 16
+ct = VARPTR(cl(0))
+tkb = msb + 59
+FOR k = 0 TO 31 : ms(k) = 0 : NEXT k
+FOR k = 0 TO 560 : mp(k) = 0 : NEXT k
+' tabelle: ry(y) = offset della riga del pixel y, cx(x) = colonna del pixel x (la divisione costerebbe troppo)
+FOR k = 0 TO 271 : ry(k) = (k \ 8) * 32 : cx(k) = k \ 8 : NEXT k
+' vt(v + 15) = -(v / 4) con la divisione del C, che tronca verso lo zero
+FOR k = 0 TO 30
+ n = k - 15
+ IF n >= 0 THEN vt(k) = -(n \ 4) ELSE vt(k) = (-n) \ 4
+NEXT k
+FOR k = 0 TO 255
+ n = 0
+ IF k > 115 AND k < 184 THEN n = 1
+ IF k = 64 OR (k >= 105 AND k <= 108) OR k = 114 OR k = 115 THEN n = n + 2
+ IF k = 83 OR k = 99 OR k = 113 THEN n = n + 4
+ IF k = 81 OR k = 82 THEN n = n + 8
+ POKE ct + k, n
+NEXT k
+SCREEN 1, 2
+COLOR 15, 1, 1
+VDP(1) = VDP(1) AND 191
+' PSG: suono spento; il registro 15 e' un'uscita (bit 7 del mixer), il 14 un ingresso
+SOUND 7, 191
+OUT 160, 15 : OUT 161, 143
+CALL setup
+' Interrupt (hook H.TIMI). Ad ogni frame: conta i tick (il gioco originale salta un frame ogni sei), suona un frame della musica
+' (i registri del PSG sono impacchettati nei segmenti 9-13, mappati nella finestra dati), aggiunge l'effetto sonoro ayFX sul canale A,
+' legge tastiera e joystick e rimette il banco che il programma stava usando.
+' Blocco ms (offset): 0 musica attiva, 1 banco della finestra dati, 2 banco, 3-4 puntatore, 5-6 frame rimasti, 7-11 punto di loop,
+' 12-25 registri, 26 inviluppo nuovo, 27 effetto attivo, 28-29 puntatore effetto, 31-32 tono, 33 rumore, 35 banco effetti,
+' 36-40 vecchio hook, 41 appoggio, 42-54 registri in uscita, 56 input (1 destra, 2 sinistra, 4 salto, 8 azione), 57 riga 0 della tastiera,
+' 58 riga 8, 59 tick da eseguire, 60 contatore dei sei frame.
+__ASM
+  jp after
+isr:
+  push af
+  push bc
+  push de
+  push hl
+  push ix
+  push iy
+  ld iy,(msb)
+  ld a,(iy+60)
+  inc a
+  cp 6
+  jr c,tk1
+  xor a
+  ld (iy+60),a
+  jr tk2
+tk1:
+  ld (iy+60),a
+  inc (iy+59)
+tk2:
+  ld a,(iy+0)
+  or a
+  jp z,nomus
+  ld a,(iy+2)
+  ld (7800h),a
+  ld l,(iy+3)
+  ld h,(iy+4)
+  ld a,h
+  cp 0BFh
+  jr c,ok
+  jr nz,nxt
+  ld a,l
+  cp 0F0h
+  jr c,ok
+nxt:
+  inc (iy+2)
+  ld a,(iy+2)
+  ld (7800h),a
+  ld hl,0A000h
+ok:
+  ld e,(iy+5)
+  ld d,(iy+6)
+  ld a,d
+  or e
+  jr nz,cont
+  ld a,(iy+7)
+  ld (iy+2),a
+  ld (7800h),a
+  ld l,(iy+8)
+  ld h,(iy+9)
+  ld e,(iy+10)
+  ld d,(iy+11)
+cont:
+  dec de
+  ld (iy+5),e
+  ld (iy+6),d
+  ld c,(hl)
+  inc hl
+  ld b,0
+  bit 7,c
+  jr z,nom1
+  ld b,(hl)
+  inc hl
+nom1:
+  ld (iy+41),b
+  push iy
+  pop de
+  ld a,e
+  add a,12
+  ld e,a
+  jr nc,nc1
+  inc d
+nc1:
+  ld b,7
+l1:
+  srl c
+  jr nc,n1
+  ld a,(hl)
+  ld (de),a
+  inc hl
+n1:
+  inc de
+  djnz l1
+  ld c,(iy+41)
+  ld b,7
+l2:
+  srl c
+  jr nc,n2
+  ld a,(hl)
+  ld (de),a
+  inc hl
+n2:
+  inc de
+  djnz l2
+  bit 6,(iy+41)
+  jr z,noev
+  ld (iy+26),1
+noev:
+  ld (iy+3),l
+  ld (iy+4),h
+nomus:
+  push iy
+  pop hl
+  ld de,12
+  add hl,de
+  push iy
+  pop de
+  ld a,e
+  add a,42
+  ld e,a
+  jr nc,nc2
+  inc d
+nc2:
+  ld bc,13
+  ldir
+  ld a,(iy+0)
+  or a
+  jr nz,on1
+  ld (iy+50),a
+  ld (iy+51),a
+  ld (iy+52),a
+on1:
+  ld a,(iy+27)
+  or a
+  jr z,nofx
+  ld a,(iy+35)
+  ld (7800h),a
+  ld l,(iy+28)
+  ld h,(iy+29)
+  ld c,(hl)
+  inc hl
+  bit 5,c
+  jr z,fx1
+  ld a,(hl)
+  ld (iy+31),a
+  inc hl
+  ld a,(hl)
+  ld (iy+32),a
+  inc hl
+fx1:
+  bit 6,c
+  jr z,fx2
+  ld a,(hl)
+  inc hl
+  cp 20h
+  jr nz,fx3
+  xor a
+  ld (iy+27),a
+  jr nofx
+fx3:
+  ld (iy+33),a
+fx2:
+  ld (iy+28),l
+  ld (iy+29),h
+  ld a,c
+  and 0Fh
+  jr z,nofx
+  ld b,a
+  bit 7,c
+  jr nz,fx4
+  ld a,(iy+33)
+  ld (iy+48),a
+fx4:
+  ld a,c
+  and 90h
+  cp 90h
+  jr z,nofx
+  rrca
+  rrca
+  rrca
+  rrca
+  ld d,a
+  ld a,(iy+49)
+  and 0F6h
+  or d
+  ld (iy+49),a
+  ld (iy+50),b
+  bit 0,d
+  jr nz,nofx
+  ld a,(iy+31)
+  ld (iy+42),a
+  ld a,(iy+32)
+  ld (iy+43),a
+nofx:
+  ld a,(iy+49)
+  and 3Fh
+  or 80h
+  ld (iy+49),a
+  push iy
+  pop hl
+  ld de,42
+  add hl,de
+  ld b,13
+  ld c,0
+wl:
+  ld a,c
+  out (0A0h),a
+  ld a,(hl)
+  out (0A1h),a
+  inc hl
+  inc c
+  djnz wl
+  ld a,(iy+26)
+  or a
+  jr z,nev2
+  ld a,13
+  out (0A0h),a
+  ld a,(iy+25)
+  out (0A1h),a
+  xor a
+  ld (iy+26),a
+nev2:
+  in a,(0AAh)
+  and 0F0h
+  ld d,a
+  or 8
+  out (0AAh),a
+  in a,(0A9h)
+  ld (iy+58),a
+  ld b,a
+  ld a,d
+  out (0AAh),a
+  in a,(0A9h)
+  ld (iy+57),a
+  ld c,0
+  bit 7,b
+  jr nz,k1
+  set 0,c
+k1:
+  bit 4,b
+  jr nz,k2
+  set 1,c
+k2:
+  bit 5,b
+  jr nz,k3
+  set 2,c
+k3:
+  bit 0,b
+  jr nz,k4
+  set 3,c
+k4:
+  ld a,8Fh
+  call joy
+  ld a,0CFh
+  call joy
+  ld (iy+56),c
+  ld a,(iy+1)
+  ld (7800h),a
+  push iy
+  pop hl
+  ld de,36
+  add hl,de
+  call callhl
+  pop iy
+  pop ix
+  pop hl
+  pop de
+  pop bc
+  pop af
+  ret
+callhl:
+  jp (hl)
+joy:
+  ld b,a
+  ld a,15
+  out (0A0h),a
+  ld a,b
+  out (0A1h),a
+  ld a,14
+  out (0A0h),a
+  in a,(0A2h)
+  cpl
+  and 3Fh
+  ld b,a
+  and 0Fh
+  cp 8
+  jr nz,j1
+  set 0,c
+  jr j2
+j1:
+  cp 4
+  jr nz,j2
+  set 1,c
+j2:
+  bit 4,b
+  jr z,j3
+  set 2,c
+j3:
+  bit 5,b
+  ret z
+  set 3,c
+  ret
+after:
+  ld iy,(msb)
+  ld hl,0FD9Fh
+  push iy
+  pop de
+  ld a,e
+  add a,36
+  ld e,a
+  jr nc,nc3
+  inc d
+nc3:
+  ld bc,5
+  ldir
+  di
+  ld a,0C3h
+  ld (0FD9Fh),a
+  ld hl,isr
+  ld (0FDA0h),hl
+  ei
+__ENDASM
+mainmenu:
+CALL mus(0)
+CALL menu
+CALL newgame
+CALL drawlv(0)
+st = 0
+gameloop:
+n = PEEK(tkb)
+IF n = 0 THEN GOTO gameloop
+POKE tkb, n - 1
+CALL tick
+IF st = 0 THEN GOTO gameloop
+IF st = 1 THEN
+ CALL drawlv(26)
+ CALL mus(1)
+ELSE
+ CALL drawlv(27)
+END IF
+WHILE PEEK(msb + 58) <> 254 : WEND
+GOTO mainmenu
