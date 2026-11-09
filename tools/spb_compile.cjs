@@ -10,8 +10,12 @@ Module._load = function(request) {
   return origLoad.apply(this, arguments);
 };
 
-const extPath = 'C:/Users/nicol/.vscode/extensions/fpracek.samprbasic-1.4.2/dist/extension.js';
-const toolsDir = 'C:/Users/nicol/.vscode/extensions/fpracek.samprbasic-1.4.2/tools';
+const extensionsDir = 'C:/Users/nicol/.vscode/extensions';
+const dirs = fs.readdirSync(extensionsDir).filter(d => d.startsWith('fpracek.samprbasic-'));
+dirs.sort();
+const latestExt = dirs[dirs.length - 1];
+const extPath = path.join(extensionsDir, latestExt, 'dist/extension.js');
+const toolsDir = path.join(extensionsDir, latestExt, 'tools');
 
 let extSrc = fs.readFileSync(extPath, 'utf8');
 extSrc += '\n; module.exports.compile = compile;\n';

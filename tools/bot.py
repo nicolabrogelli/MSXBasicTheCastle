@@ -17,7 +17,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 OPENMSX = r"C:\Users\nicol\Documents\BACKUP\DOC - RETROCOMPUTER\COMPUTER\MSX\EMULATORI\OPENMSX 22.0\openmsx.exe"
 ROMS = {
-    'orig': (os.path.join(os.path.dirname(ROOT), 'emul', 'rom', 'the-castel.rom'), 'ASCII16', 0, 6),
+    'orig': (os.path.join(ROOT, 'emul', 'rom', 'the-castel.rom') if os.path.exists(os.path.join(ROOT, 'emul', 'rom', 'the-castel.rom')) else os.path.join(os.path.dirname(ROOT), 'emul', 'rom', 'the-castel.rom'), 'ASCII16', 0, 6),
     'port': (os.path.join(ROOT, 'CASTL.ROM'), 'ASCII8', 0, 2),
 }
 KEYS = {'R': '8 0x80', 'L': '8 0x10', 'U': '8 0x20', 'S': '8 0x01'}
